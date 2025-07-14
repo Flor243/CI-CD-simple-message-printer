@@ -1,0 +1,4 @@
+# cloud_functions/requirements.txt
+# Dependencies específicas para Cloud Functions
+
+functions-framework==3.*
