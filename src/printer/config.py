@@ -4,7 +4,7 @@ import os
 class Config:
     """
     Configuración centralizada para el Simple Message Printer.
-    Todas las variables de entorno y configuraciones en un solo lugar.
+    Todas las variables de entorno y configuraciones en un solo lugar
     """
     
     # Configuración básica
