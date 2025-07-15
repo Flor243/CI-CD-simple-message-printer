@@ -22,18 +22,7 @@ echo "# Clean __init__.py" > cloud_functions/utils/__init__.py
 cd cloud_functions/
 
 echo "🚀 Deploying..."
-gcloud functions deploy $FUNCTION_NAME \
-    --gen2 \
-    --runtime=python311 \
-    --source=. \
-    --entry-point=simple_message_printer \
-    --trigger-http \
-    --no-allow-unauthenticated \
-    --set-env-vars="LOG_LEVEL=INFO,ENVIRONMENT=manual,DEFAULT_MESSAGE=Hello from manual deploy!,DEPLOYED_BY=manual" \
-    --memory=512Mi \
-    --timeout=60s \
-    --region=$REGION \
-    --project=$PROJECT_ID
+gcloud functions deploy $FUNCTION_NAME     --gen2     --runtime=python311     --source=.     --entry-point=simple_message_printer     --trigger-http     --no-allow-unauthenticated     --set-env-vars="LOG_LEVEL=INFO,ENVIRONMENT=manual,DEFAULT_MESSAGE=Hello from manual deploy!,DEPLOYED_BY=manual"     --memory=512Mi     --timeout=60s     --region=$REGION     --project=$PROJECT_ID
 
 echo "✅ Deploy completado"
 
