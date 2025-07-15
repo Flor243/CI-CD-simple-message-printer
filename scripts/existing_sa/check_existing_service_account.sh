@@ -1,6 +1,6 @@
 #!/bin/bash
 # scripts/check_service_accounts_fixed.sh
-# Verificar Service Accounts existentes y sus permisos (VERSIÓN CORREGIDA)
+# Verificar Service Accounts existentes y sus permisos
 
 set -e
 
