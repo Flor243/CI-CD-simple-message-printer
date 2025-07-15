@@ -214,8 +214,7 @@ jobs:
         echo "🎯 Function: ${FUNCTION_NAME_ENV}"
         
         AUTHORIZED_USERS=(
-          "flor@howdy.com"
-          "admin@howdy.com"
+          "ffernandez@howdy.com"
         )
         
         SERVICE_ACCOUNT="serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
