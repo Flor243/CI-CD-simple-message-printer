@@ -94,4 +94,6 @@ tmp/
 *.backup
 
 setup_cloud_deployment.txt
+setup_cloud_deployment.sh
 deploy-cloud-function.txt
+existing_sa/

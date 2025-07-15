@@ -78,9 +78,10 @@ CI-CD-simple-message-printer/
 │       ├── __init__.py
 │       └── logger.py               # Logging
 ├── 📁 scripts/                     # Scripts de automatización
-│   ├── setup_cloud_deployment.sh   # Setup inicial
+│   ├── setup_ci_cd.sh             # Setup unificado (NUEVO)
 │   ├── test_local.sh              # Testing local
-│   └── deploy_manual.sh           # Deploy manual
+│   ├── deploy_manual.sh           # Deploy manual
+│   └── check_service_accounts_fixed.sh # Análisis de SAs
 ├── 📁 tests/                       # Tests unitarios
 │   ├── __init__.py
 │   └── test_printer.py
@@ -113,29 +114,53 @@ pip install -r requirements.txt
 python -c "import functions_framework; print('✅ Setup OK')"
 ```
 
-### 2️⃣ Setup de Google Cloud
+### 2️⃣ Setup de Google Cloud (NUEVO SCRIPT UNIFICADO)
 
+🎯 **Ahora tienes 3 opciones para configurar Google Cloud:**
+
+#### **Opción A: Modo Interactivo (Recomendado)**
 ```bash
 # Dar permisos de ejecución
-chmod +x scripts/setup_cloud_deployment.sh
+chmod +x scripts/setup_ci_cd.sh
 
-# Ejecutar setup automático
-./scripts/setup_cloud_deployment.sh --project-id your-gcp-project-id
+# Ejecutar en modo interactivo - te guía paso a paso
+./scripts/setup_ci_cd.sh
 
-# Esto configurará:
-# ✅ APIs necesarias
-# ✅ Service Account
-# ✅ Permisos IAM
-# ✅ Scripts de testing
+# El script te preguntará:
+# 1. ¿Crear nueva Service Account o usar una existente?
+# 2. Si eliges existente, te mostrará las disponibles
+# 3. Te ayuda a elegir la mejor opción
 ```
+
+#### **Opción B: Crear nueva Service Account directamente**
+```bash
+./scripts/setup_ci_cd.sh --create-new
+```
+
+#### **Opción C: Usar Service Account existente**
+```bash
+# Primero ver qué Service Accounts tienes disponibles
+./scripts/check_service_accounts_fixed.sh
+
+# Luego usar una específica
+./scripts/setup_ci_cd.sh --use-existing admin-sa@your-project.iam.gserviceaccount.com
+```
+
+#### **¿Qué hace el script automáticamente?**
+- ✅ **Analiza tu proyecto** → Ve qué Service Accounts ya existen
+- ✅ **Evalúa permisos** → Recomienda la mejor Service Account
+- ✅ **Habilita APIs** → Configura todas las APIs necesarias
+- ✅ **Gestiona permisos** → Asigna roles si crea nueva SA
+- ✅ **Genera claves** → Crea JSON para GitHub Secrets
+- ✅ **Da instrucciones** → Te dice exactamente qué hacer después
 
 ### 3️⃣ Configurar GitHub Secrets
 
-En GitHub: `Settings > Secrets and Variables > Actions`
+El script de setup te dará **exactamente** qué copiar. Ve a GitHub: `Settings > Secrets and Variables > Actions`
 
 **Secrets REQUERIDOS:**
 ```
-GCP_SA_KEY: {"type":"service_account",...}  # JSON del Service Account
+GCP_SA_KEY: {"type":"service_account",...}  # JSON que te da el script
 GCP_PROJECT_ID: your-gcp-project-id
 ```
 
@@ -158,32 +183,28 @@ git push origin main
 # Ver el deployment en GitHub Actions tab
 ```
 
-### 5️⃣ Usar la Function (Con Autenticación Requerida)
+### 5️⃣ Usar la Function
 
-⚠️ **IMPORTANTE: Esta Cloud Function requiere autenticación IAM**
+⚠️ **NOTA:** Con la configuración actual, la function es **pública** (no requiere autenticación).
 
 ```bash
-# PASO 1: Autenticarse con Google Cloud
-gcloud auth login
-
-# PASO 2: Obtener URL de la function desde GitHub Actions logs o:
-FUNCTION_URL=$(gcloud functions describe your-existing-GC-function \
+# PASO 1: Obtener URL de la function desde GitHub Actions logs o:
+FUNCTION_URL=$(gcloud functions describe simple-message-printer-production \
   --region=us-central1 --format="value(serviceConfig.uri)")
 
-# PASO 3: Generar token de autenticación
-ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
-
-# PASO 4: Usar la function CON autenticación
+# PASO 2: Usar la function (sin autenticación)
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ID_TOKEN" \
   -d '{"mode": "simple", "message": "Hello World!", "user": "YourName"}'
 
-# ❌ Esto FALLARÁ (sin autenticación):
+# PASO 3: Probar diferentes modos
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
-  -d '{"mode": "simple"}'
-# Response: 403 Forbidden
+  -d '{"mode": "multiple", "message": "Test", "count": 3, "user": "YourName"}'
+
+curl -X POST "$FUNCTION_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "environment"}'
 ```
 
 ## 🔧 Setup Detallado
@@ -196,7 +217,43 @@ curl -X POST "$FUNCTION_URL" \
 - **Git** configurado
 - **Python 3.11+** instalado
 
-#### 🐍 Configuración de Entorno Virtual de Python
+### 🎯 **Opciones de Setup (Nuevo Sistema Unificado)**
+
+El nuevo script `setup_ci_cd.sh` maneja **ambos casos** automáticamente:
+
+#### **📊 Análisis Automático de Service Accounts**
+
+```bash
+# Ver análisis detallado de todas las Service Accounts disponibles
+./scripts/check_service_accounts_fixed.sh
+```
+
+Este script:
+- 📋 **Lista todas las SAs** en tu proyecto
+- 🔍 **Analiza permisos** de cada una  
+- ⭐ **Recomienda** cuáles son mejores para CI/CD
+- 📊 **Clasifica** como: PERFECTA, EXCELENTE, BUENA, LIMITADA
+
+#### **🚀 Setup Unificado Inteligente**
+
+```bash
+# Modo interactivo - te guía en la decisión
+./scripts/setup_ci_cd.sh
+
+# O modos directos:
+./scripts/setup_ci_cd.sh --create-new                    # Crear nueva SA
+./scripts/setup_ci_cd.sh --use-existing SA_EMAIL        # Usar SA existente
+./scripts/setup_ci_cd.sh --help                         # Ver todas las opciones
+```
+
+**El script detecta automáticamente:**
+- ✅ Si tienes permisos para crear Service Accounts
+- ✅ Qué Service Accounts ya existen y sus permisos
+- ✅ Cuál es la mejor opción para tu situación
+- ✅ Qué APIs están habilitadas/faltan
+- ⚠️ Si hay problemas de permisos y cómo solucionarlos
+
+### 🐍 Configuración de Entorno Virtual de Python
 
 **¿Por qué usar un entorno virtual?**
 - **Aislamiento**: Evita conflictos entre dependencies de diferentes proyectos
@@ -233,19 +290,6 @@ where python   # Windows
 python -m pip install --upgrade pip
 ```
 
-**Método 2: conda (si prefieres Anaconda/Miniconda)**
-```bash
-# 1. Crear entorno con Python 3.11
-conda create -n simple-printer python=3.11
-
-# 2. Activar entorno
-conda activate simple-printer
-
-# 3. Verificar activación
-which python    # Debe apuntar a conda envs
-python --version # Debe ser 3.11.x
-```
-
 #### 📚 Instalación de dependencies
 
 ```bash
@@ -264,137 +308,13 @@ pip install black        # Code formatter
 pip install mypy         # Type checker
 ```
 
-#### 🔄 Workflow diario de desarrollo
-
-```bash
-# Cada vez que trabajes en el proyecto:
-
-# 1. Navegar al directorio del proyecto
-cd CI-CD-simple-message-printer
-
-# 2. Activar entorno virtual
-source venv/bin/activate  # macOS/Linux
-# o
-venv\Scripts\activate     # Windows
-
-# 3. Verificar que está activado
-# Debe ver (venv) en el prompt
-
-# 4. Trabajar en el proyecto...
-python src/printer/message_printer.py
-pytest tests/
-./scripts/test_local.sh
-
-# 5. Desactivar cuando termines
-deactivate
-```
-
-#### 🗂️ Estructura con entorno virtual
-
-```
-CI-CD-simple-message-printer/
-├── venv/                    # ← Entorno virtual (en .gitignore)
-│   ├── bin/                 # Scripts (macOS/Linux)
-│   ├── Scripts/             # Scripts (Windows)
-│   ├── lib/                 # Libraries instaladas
-│   └── pyvenv.cfg          # Configuración del entorno
-├── .github/workflows/
-├── src/
-├── tests/
-├── requirements.txt         # Dependencies del proyecto
-└── .gitignore              # venv/ debe estar aquí
-```
-
-#### ⚠️ Importante: .gitignore
-
-Asegúrate de que `venv/` esté en `.gitignore`:
-
-```bash
-# Verificar que venv está ignorado
-cat .gitignore | grep venv
-
-# Si no está, agregarlo:
-echo "venv/" >> .gitignore
-echo ".venv/" >> .gitignore  # También común
-```
-
-#### 🔧 Comandos útiles
-
-```bash
-# Ver qué packages están instalados
-pip list
-
-# Ver información del entorno
-pip show functions-framework
-
-# Generar requirements.txt actualizado
-pip freeze > requirements-current.txt
-
-# Comparar con requirements.txt original
-diff requirements.txt requirements-current.txt
-
-# Reinstalar todo desde requirements.txt
-pip install -r requirements.txt --force-reinstall
-
-# Desinstalar todo (limpiar entorno)
-pip freeze | xargs pip uninstall -y
-```
-
-#### 🐛 Troubleshooting común
-
-**Problema: `python` comando no encontrado**
-```bash
-# Verificar instalación de Python
-python3 --version  # En algunos sistemas es python3
-# O
-py --version       # En Windows con Python Launcher
-```
-
-**Problema: Entorno no se activa**
-```bash
-# En Windows, si PowerShell no permite scripts:
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-
-# Alternativa en Windows:
-venv\Scripts\activate.bat  # En lugar de activate.ps1
-```
-
-**Problema: Dependencies no se instalan**
-```bash
-# Verificar que pip está actualizado
-python -m pip install --upgrade pip
-
-# Verificar que estás en el entorno virtual
-which pip  # Debe apuntar a venv/bin/pip
-
-# Instalar con verbose para ver errores
-pip install -r requirements.txt -v
-```
-
-**Problema: Import errors en tests**
-```bash
-# Verificar que estás en el directorio correcto
-pwd  # Debe ser simple-message-printer/
-
-# Verificar que src/ está en el path
-python -c "import sys; print(sys.path)"
-
-# Ejecutar tests desde el directorio raíz
-pytest tests/ -v
-```
-
-#### 🔧 Instalación de gcloud CLI
+### 🔧 Instalación de gcloud CLI
 
 Si no tienes gcloud CLI instalado:
 
 **🖥️ Windows:**
 ```bash
-# Descargar e instalar desde:
-# https://cloud.google.com/sdk/docs/install-sdk#windows
-
-# O usando Chocolatey:
-choco install gcloudsdk
-
+# Descargar desde: https://cloud.google.com/sdk/docs/install-sdk#windows
 # O usando winget:
 winget install Google.CloudSDK
 ```
@@ -403,109 +323,32 @@ winget install Google.CloudSDK
 ```bash
 # Usando Homebrew (recomendado):
 brew install --cask google-cloud-sdk
-
-# O descargar desde:
-# https://cloud.google.com/sdk/docs/install-sdk#mac
 ```
 
-**🐧 Linux (Ubuntu/Debian):**
+**🐧 Linux:**
 ```bash
-# Método 1: Snap (más fácil)
+# Ubuntu/Debian:
 sudo snap install google-cloud-cli --classic
 
-# Método 2: APT repository
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
-sudo apt-get update && sudo apt-get install google-cloud-cli
-```
-
-**🐧 Linux (CentOS/RHEL/Fedora):**
-```bash
-# Añadir repositorio YUM
-sudo tee -a /etc/yum.repos.d/google-cloud-sdk.repo << EOM
-[google-cloud-cli]
-name=Google Cloud CLI
-baseurl=https://packages.cloud.google.com/yum/repos/cloud-sdk-el8-x86_64
-enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
-       https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
-EOM
-
-# Instalar
+# CentOS/RHEL/Fedora:
 sudo dnf install google-cloud-cli
-# O en sistemas más antiguos: sudo yum install google-cloud-cli
 ```
 
 #### 🔐 Autenticación inicial de gcloud
 
-Después de instalar gcloud CLI:
-
 ```bash
 # 1. Autenticarse con tu cuenta de Google
 gcloud auth login
-# Esto abrirá un browser para que autorices el acceso
 
 # 2. Verificar autenticación
 gcloud auth list
-# Debe mostrar tu email con un asterisco (*)
 
-# 3. Configurar proyecto por defecto (opcional)
+# 3. Configurar proyecto por defecto
 gcloud config set project your-project-id
 
 # 4. Verificar configuración
 gcloud config list
-
-# 5. Habilitar Application Default Credentials (recomendado)
-gcloud auth application-default login
 ```
-
-#### ✅ Verificación de setup
-
-```bash
-# Verificar instalación
-gcloud version
-
-# Verificar autenticación
-gcloud auth list --filter=status:ACTIVE --format="value(account)"
-
-# Test básico
-gcloud projects list --limit=5
-```
-
-### 🔐 Google Cloud Setup
-
-1. **Crear o seleccionar proyecto GCP:**
-```bash
-# Crear nuevo proyecto
-gcloud projects create your-simple-printer-project --name="Simple Message Printer"
-
-# O usar proyecto existente
-gcloud config set project your-existing-project
-```
-
-2. **Ejecutar setup automático:**
-```bash
-./scripts/setup_cloud_deployment.sh --project-id your-project-id
-```
-
-3. **Verificar setup:**
-```bash
-# Verificar APIs habilitadas
-gcloud services list --enabled --filter="name:(cloudfunctions OR cloudbuild)"
-
-# Verificar Service Account
-gcloud iam service-accounts list --filter="github-actions-deployer"
-```
-
-### 🔑 GitHub Secrets Setup
-
-El script de setup te dará el JSON del Service Account. Copiarlo en GitHub:
-
-1. Ve a tu repo → `Settings` → `Secrets and Variables` → `Actions`
-2. Click `New repository secret`
-3. Agregar cada secret según la lista de arriba
 
 ### 🌍 Configuración de Environments
 
@@ -522,39 +365,11 @@ Cada environment tiene su propia Cloud Function:
 
 ## 💻 Desarrollo Local
 
-### 🐍 Setup inicial del entorno
-
-```bash
-# 1. Clonar el repositorio
-git clone https://github.com/Flor243/CI-CD-simple-message-printer.git
-cd CI-CD-simple-message-printer
-
-# 2. Crear y activar entorno virtual
-python -m venv venv
-source venv/bin/activate  # macOS/Linux
-# o venv\Scripts\activate  # Windows
-
-# 3. Verificar entorno virtual activo
-# Debe ver (venv) en el prompt
-which python  # Debe apuntar a venv/
-
-# 4. Instalar dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# 5. Verificar instalación
-python -c "import functions_framework; print('✅ Functions Framework OK')"
-python -c "import pytest; print('✅ Pytest OK')"
-```
-
 ### 🧪 Testing Local
 
 ```bash
 # ⚠️ IMPORTANTE: Siempre con entorno virtual activado
 source venv/bin/activate  # Si no está activado
-
-# Setup de variables de entorno
-source env_example.sh
 
 # Ejecutar tests unitarios
 pytest tests/ -v
@@ -592,30 +407,6 @@ git push origin feature/new-functionality
 # 7. Automáticamente deploya a development environment
 ```
 
-### 📝 Agregar Nueva Funcionalidad
-
-Ejemplo: Agregar modo "countdown"
-
-```python
-# En src/printer/message_printer.py
-def print_countdown(self, start: int, user: str = None) -> list:
-    """Imprime countdown desde start hasta 0"""
-    results = []
-    for i in range(start, -1, -1):
-        message = f"Countdown: {i}"
-        result = self.print_message(message, user)
-        results.append(result)
-    return results
-```
-
-```python
-# En cloud_functions/main.py, agregar en el request handler:
-elif mode == 'countdown':
-    start_num = min(request_json.get('start', 5), 10)  # Max 10
-    results = printer.print_countdown(start_num, user)
-    logger.info(f"🔢 Countdown from {start_num} completed")
-```
-
 ## 🚀 Deployment
 
 ### 🤖 Deployment Automático (Recomendado)
@@ -634,29 +425,12 @@ El deployment se hace automáticamente via GitHub Actions:
 # GitHub repo → Actions tab
 
 # Ver logs de Cloud Function
-gcloud functions logs read your-existing-GC-function \
+gcloud functions logs read simple-message-printer-production \
   --region=us-central1 \
   --limit=50
 
 # Metrics en GCP Console
-# Cloud Functions → your-existing-GC-function → Metrics
-```
-
-### 🔧 Deploy Manual (Backup)
-
-```bash
-# Si GitHub Actions falla o para testing rápido
-./scripts/deploy_manual.sh
-
-# Para deploy a environment específico
-gcloud functions deploy simple-message-printer-manual \
-  --gen2 \
-  --runtime=python311 \
-  --source=cloud_functions/ \
-  --entry-point=simple_message_printer \
-  --trigger-http \
-  --allow-unauthenticated \
-  --region=us-central1
+# Cloud Functions → simple-message-printer-production → Metrics
 ```
 
 ## 🧪 Testing
@@ -696,40 +470,21 @@ curl -X POST "$FUNCTION_URL" \
   -d '{"mode": "environment"}'
 ```
 
-### 📈 Load Testing (Opcional)
-
-```bash
-# Usando Apache Bench
-ab -n 100 -c 10 -T 'application/json' \
-  -p test_payload.json \
-  "$FUNCTION_URL"
-
-# test_payload.json:
-# {"mode": "simple", "message": "Load test", "user": "LoadTester"}
-```
-
 ## 📊 Monitoreo
-
-### 📊 Monitoreo
 
 ### 📋 Logs
 
 ```bash
-# Cloud Function logs (usuarios autenticados)
-gcloud functions logs read your-existing-GC-function --region=us-central1
+# Cloud Function logs
+gcloud functions logs read simple-message-printer-production --region=us-central1
 
 # Logs en tiempo real
-gcloud functions logs tail your-existing-GC-function --region=us-central1
+gcloud functions logs tail simple-message-printer-production --region=us-central1
 
 # Filtrar por severity
-gcloud functions logs read your-existing-GC-function \
+gcloud functions logs read simple-message-printer-production \
   --region=us-central1 \
   --filter="severity>=ERROR"
-
-# Ver logs de accesos denegados (security monitoring)
-gcloud functions logs read your-existing-GC-function \
-  --region=us-central1 \
-  --filter="textPayload:403 OR textPayload:Forbidden"
 ```
 
 ### 📈 Metrics
@@ -744,89 +499,52 @@ gcloud functions logs read your-existing-GC-function \
 - Memory utilization  
 - Error rate
 
-### 🚨 Alerting (Opcional)
-
-```bash
-# Crear alerta para error rate
-gcloud alpha monitoring policies create \
-  --policy-from-file=alerting-policy.yaml
-```
-
 ## 🔒 Seguridad
 
-### 🔐 Autenticación IAM
+### 🌐 Configuración Actual: Function Pública
 
-**✅ IMPLEMENTADO: Esta Cloud Function requiere autenticación**
+**Estado actual:** La Cloud Function está configurada como **pública** (`--allow-unauthenticated`)
 
-- **Solo usuarios autorizados** pueden invocar la function
-- **Tokens IAM requeridos** para cada request
-- **Configuración automática** de permisos durante deployment
-- **Monitoring de accesos** denegados
+**Esto significa:**
+- ✅ **Fácil de usar** → No necesita tokens de autenticación
+- ✅ **Testing simple** → Cualquier curl funciona
+- ⚠️ **Menos seguro** → Cualquiera con la URL puede usarla
+- 💡 **Ideal para desarrollo** y demos
 
-#### 👥 Gestión de Usuarios Autorizados
+### 🔐 Para Habilitar Autenticación (Opcional)
 
-```bash
-# Ver usuarios que tienen acceso actual
-gcloud functions get-iam-policy your-existing-GC-function \
-  --region=us-central1
+Si quieres hacer la function privada, modifica el workflow:
 
-# Agregar nuevo usuario autorizado
-gcloud functions add-iam-policy-binding your-existing-GC-function \
-  --region=us-central1 \
-  --member="user:nuevo-usuario@empresa.com" \
-  --role="roles/cloudfunctions.invoker"
+```yaml
+# En .github/workflows/deploy-cloud-function.yml
+# Cambiar esta línea:
+--allow-unauthenticated
 
-# Remover acceso de usuario
-gcloud functions remove-iam-policy-binding your-existing-GC-function \
-  --region=us-central1 \
-  --member="user:usuario@empresa.com" \
-  --role="roles/cloudfunctions.invoker"
-
-# Agregar grupo de Google Workspace (si aplica)
-gcloud functions add-iam-policy-binding your-existing-GC-function \
-  --region=us-central1 \
-  --member="group:data-team@empresa.com" \
-  --role="roles/cloudfunctions.invoker"
+# Por esta:
+--no-allow-unauthenticated
 ```
 
-#### 🔍 Testing de Seguridad
-
+**Entonces necesitarás autenticación:**
 ```bash
-# Test que autenticación funciona
+# Generar token
 FUNCTION_URL="your-function-url"
 ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
 
-# Request autenticado (debe funcionar)
+# Usar con autenticación
 curl -X POST "$FUNCTION_URL" \
   -H "Authorization: Bearer $ID_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode": "test"}'
-
-# Request sin autenticación (debe fallar con 403)
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "test"}'
+  -d '{"mode": "simple", "message": "Hello World!", "user": "YourName"}'
 ```
 
-### 🛡️ Permisos IAM
+### 🛡️ Permisos IAM del Service Account
 
 El Service Account tiene **solo** los permisos necesarios:
 - `cloudfunctions.admin` - Para deploy de functions
 - `cloudbuild.builds.builder` - Para builds
 - `logging.admin` - Para logs
+- `iam.serviceAccountUser` - Para usar Service Accounts
 - `serviceusage.serviceUsageAdmin` - Para gestionar APIs
-
-### 🔍 Audit Logs
-
-```bash
-# Ver audit logs de IAM
-gcloud logging read 'protoPayload.serviceName="cloudresourcemanager.googleapis.com"' \
-  --limit=50
-
-# Ver accesos a la function
-gcloud logging read 'resource.type="cloud_function"' \
-  --filter='protoPayload.methodName="google.cloud.functions.v1.CloudFunctionsService.CallFunction"'
-```
 
 ## 📚 Documentación Técnica
 
@@ -891,43 +609,30 @@ gcloud logging read 'resource.type="cloud_function"' \
 | `MAX_MESSAGE_LENGTH` | `1000` | Límite de caracteres |
 | `MAX_MESSAGES_PER_REQUEST` | `10` | Límite de mensajes por request |
 
-### 🏗️ Arquitectura del Código
-
-```python
-# Estructura modular
-src/
-├── printer/              # Lógica de negocio
-│   ├── message_printer.py    # Clase principal
-│   └── config.py             # Configuración centralizada
-└── utils/                # Utilidades
-    └── logger.py             # Logging estructurado
-
-cloud_functions/
-└── main.py               # Entry point para Cloud Functions
-```
-
-### 🔄 Flujo de Request
-
-1. **HTTP Request** → `main.py:simple_message_printer()`
-2. **Parse Request** → Extrae parámetros del JSON
-3. **Initialize** → Crea instancia de `MessagePrinter`
-4. **Process** → Ejecuta según el `mode` especificado
-5. **Response** → Retorna JSON con resultados
-
 ### 🐛 Troubleshooting
 
 #### ❌ Common Issues
 
-**1. Deploy falla con "Permission Denied"**
+**1. Setup script no encuentra Service Accounts**
 ```bash
-# Verificar Service Account
-gcloud iam service-accounts list --filter="github-actions-deployer"
+# Verificar autenticación y proyecto
+gcloud auth list
+gcloud config get-value project
 
-# Re-ejecutar setup
-./scripts/setup_cloud_deployment.sh --project-id your-project
+# Re-ejecutar análisis
+./scripts/check_service_accounts_fixed.sh
 ```
 
-**2. Function retorna 500 Error**
+**2. Deploy falla con "Permission Denied"**
+```bash
+# Verificar que la Service Account tiene permisos
+./scripts/setup_ci_cd.sh --help
+
+# Re-ejecutar setup para verificar/reparar permisos
+./scripts/setup_ci_cd.sh
+```
+
+**3. Function retorna 500 Error**
 ```bash
 # Ver logs detallados
 gcloud functions logs read simple-message-printer-production --region=us-central1 --limit=10
@@ -936,48 +641,73 @@ gcloud functions logs read simple-message-printer-production --region=us-central
 pytest tests/ -v
 ```
 
-**3. GitHub Actions falla en deploy**
+**4. GitHub Actions falla en deploy**
 ```bash
 # Verificar secrets en GitHub
 # Settings → Secrets → Actions
 # Debe tener: GCP_SA_KEY, GCP_PROJECT_ID
 ```
 
-**4. Local testing no funciona**
+**5. Local testing no funciona**
 ```bash
+# Verificar entorno virtual
+source venv/bin/activate
+
 # Verificar estructura
 ls -la cloud_functions/
 # Debe tener: main.py, printer/, utils/
 
-# Re-ejecutar setup
+# Re-ejecutar setup local
 ./scripts/test_local.sh
 ```
 
-### Support
+### 🆘 Support
 
 Si encuentras issues:
 
-1. **Verificar logs** en GCP Console
-2. **Revisar GitHub Actions** logs
-3. **Ejecutar tests** localmente
-4. **Verificar permisos** del Service Account
-5. **Re-ejecutar setup** si es necesario
+1. **Verificar configuración** con el script unificado:
+   ```bash
+   ./scripts/setup_ci_cd.sh --help
+   ./scripts/check_service_accounts_fixed.sh
+   ```
+
+2. **Revisar logs** en GCP Console y GitHub Actions
+
+3. **Ejecutar tests** localmente:
+   ```bash
+   pytest tests/ -v
+   ./scripts/test_local.sh
+   ```
+
+4. **Re-ejecutar setup** si es necesario:
+   ```bash
+   ./scripts/setup_ci_cd.sh
+   ```
 
 ---
 
-## Conclusión
+## 🎉 Conclusión
 
 Este proyecto demuestra un **pipeline completo de CI/CD moderno** con:
 
-✅ **Deployment automático** en cada push
+✅ **Setup Inteligente** → Script unificado que analiza y recomienda  
+✅ **Deployment automático** en cada push  
 ✅ **Testing automatizado** con quality gates  
-✅ **Infraestructura real** en Google Cloud
-✅ **Security best practices** con Service Accounts
-✅ **Monitoring y logging** completo
-✅ **Documentación exhaustiva**
+✅ **Infraestructura real** en Google Cloud  
+✅ **Security best practices** con Service Accounts  
+✅ **Monitoring y logging** completo  
+✅ **Documentación exhaustiva**  
 
-**🔧 Personalización:**
+### 🔧 **Personalización:**
+
 Este proyecto sirve como **template base** - puedes reemplazar la lógica de "message printing" con cualquier funcionalidad que necesites, manteniendo toda la infraestructura de CI/CD intacta.
+
+### 🚀 **Siguientes Pasos:**
+
+1. **Ejecuta** `./scripts/setup_ci_cd.sh` para comenzar
+2. **Personaliza** la lógica en `src/printer/message_printer.py`
+3. **Agrega** tus propios tests en `tests/`
+4. **Deploya** con confianza usando `git push`
 
 ---
 
