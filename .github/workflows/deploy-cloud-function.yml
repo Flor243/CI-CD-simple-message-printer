@@ -1,5 +1,5 @@
 # .github/workflows/deploy-cloud-function.yml
-name: 🖨️ Deploy Simple Message Printer to Google Cloud Functions.
+name: 🖨️ Deploy Simple Message Printer to Google Cloud Functions
 
 on:
   push:
@@ -189,7 +189,7 @@ jobs:
           --source=. \
           --entry-point=simple_message_printer \
           --trigger-http \
-          --no-allow-unauthenticated \
+          --allow-unauthenticated \
           --set-env-vars="LOG_LEVEL=${{ secrets.LOG_LEVEL || 'INFO' }},ENVIRONMENT=${ENV_NAME},DEFAULT_MESSAGE=${{ secrets.DEFAULT_MESSAGE || 'Hello from Cloud Function!' }},DEFAULT_USER=${{ secrets.DEFAULT_USER || 'Cloud' }},MESSAGE_PREFIX=${{ secrets.MESSAGE_PREFIX || '🖨️' }},DEPLOYED_BY=github-actions,COMMIT_SHA=${{ github.sha }},BRANCH=${{ github.ref_name }}" \
           --memory=512Mi \
           --timeout=60s \
@@ -205,38 +205,6 @@ jobs:
           exit 1
         fi
 
-    - name: 🔐 Configure IAM permissions for authorized users
-      run: |
-        ENV_NAME="${{ steps.env.outputs.environment }}"
-        FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
-        
-        echo "🔐 Configurando permisos IAM para usuarios autorizados..."
-        echo "🎯 Function: ${FUNCTION_NAME_ENV}"
-        
-        AUTHORIZED_USERS=(
-          "ffernandez@howdy.com"
-        )
-        
-        SERVICE_ACCOUNT="serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-        
-        echo "👥 Otorgando permisos de invoker a usuarios autorizados..."
-        
-        for USER in "${AUTHORIZED_USERS[@]}"; do
-          echo "   📋 Adding user: $USER"
-          gcloud functions add-iam-policy-binding ${FUNCTION_NAME_ENV} \
-            --region=${{ env.REGION }} \
-            --member="user:$USER" \
-            --role="roles/cloudfunctions.invoker" || echo "Could not add $USER"
-        done
-        
-        echo "🤖 Otorgando permisos al Service Account para automation..."
-        gcloud functions add-iam-policy-binding ${FUNCTION_NAME_ENV} \
-          --region=${{ env.REGION }} \
-          --member="$SERVICE_ACCOUNT" \
-          --role="roles/cloudfunctions.invoker"
-        
-        echo "✅ Permisos IAM configurados exitosamente"
-
     - name: 🌐 Get function URL
       id: get_url
       run: |
@@ -250,69 +218,71 @@ jobs:
         
         echo "url=${FUNCTION_URL}" >> $GITHUB_OUTPUT
         echo "🌐 Function URL: ${FUNCTION_URL}"
-        echo "🔒 IMPORTANTE: Esta URL requiere autenticación para acceder"
+        echo "✅ Function deployed successfully and publicly accessible"
 
-    - name: 🧪 Test deployed function with authentication
+    - name: 🧪 Test deployed function
       run: |
         FUNCTION_URL="${{ steps.get_url.outputs.url }}"
         MESSAGE_COUNT="${{ github.event.inputs.message_count || '3' }}"
         
-        echo "🧪 Testing deployed function with authentication..."
+        echo "🧪 Testing deployed function..."
         echo "🎯 Function URL: $FUNCTION_URL"
         
-        echo "🎫 Generando token de autenticación..."
-        ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL" 2>/dev/null)
-        
-        if [ -z "$ID_TOKEN" ]; then
-          echo "⚠️ No se pudo generar identity token, intentando access token..."
-          ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
-          if [ -n "$ACCESS_TOKEN" ]; then
-            AUTH_HEADER="Authorization: Bearer $ACCESS_TOKEN"
-            echo "✅ Using access token for authentication"
-          else
-            echo "❌ No se pudo generar ningún token de autenticación"
-            exit 0
-          fi
-        else
-          AUTH_HEADER="Authorization: Bearer $ID_TOKEN"
-          echo "✅ Using identity token for authentication"
-        fi
-        
-        echo "🧪 TEST 1: Simple message (authenticated)"
+        echo "🧪 TEST 1: Simple message"
         RESPONSE1=$(curl -s -w "%{http_code}" -X POST "$FUNCTION_URL" \
           -H "Content-Type: application/json" \
-          -H "$AUTH_HEADER" \
-          -d '{"mode": "simple", "message": "Hello from authenticated GitHub Actions!", "user": "CI/CD-Auth"}' \
+          -d '{"mode": "simple", "message": "Hello from GitHub Actions!", "user": "CI/CD"}' \
           -o test1_response.json)
         
         HTTP_CODE1=${RESPONSE1: -3}
         echo "   📊 HTTP Status: $HTTP_CODE1"
         
         if [ "$HTTP_CODE1" -eq 200 ]; then
-          echo "   ✅ Authenticated request successful"
+          echo "   ✅ Simple test successful"
           cat test1_response.json | jq . 2>/dev/null || cat test1_response.json
         else
-          echo "   ❌ Authenticated request failed"
+          echo "   ❌ Simple test failed"
           cat test1_response.json 2>/dev/null || echo "No response body"
         fi
         
-        echo "🧪 TEST 2: Unauthenticated request (should fail)"
+        echo ""
+        echo "🧪 TEST 2: Multiple messages"
         RESPONSE2=$(curl -s -w "%{http_code}" -X POST "$FUNCTION_URL" \
           -H "Content-Type: application/json" \
-          -d '{"mode": "simple", "message": "Unauthorized test"}' \
+          -d "{\"mode\": \"multiple\", \"message\": \"CI/CD Test\", \"count\": $MESSAGE_COUNT, \"user\": \"GitHub Actions\"}" \
           -o test2_response.json)
         
         HTTP_CODE2=${RESPONSE2: -3}
         echo "   📊 HTTP Status: $HTTP_CODE2"
         
-        if [ "$HTTP_CODE2" -eq 403 ] || [ "$HTTP_CODE2" -eq 401 ]; then
-          echo "   ✅ Unauthenticated request correctly blocked"
+        if [ "$HTTP_CODE2" -eq 200 ]; then
+          echo "   ✅ Multiple messages test successful"
+          cat test2_response.json | jq . 2>/dev/null || cat test2_response.json
         else
-          echo "   ⚠️ WARNING: Unauthenticated request was not blocked"
+          echo "   ❌ Multiple messages test failed"
+          cat test2_response.json 2>/dev/null || echo "No response body"
         fi
         
-        rm -f test1_response.json test2_response.json
-        echo "✅ All authenticated tests completed"
+        echo ""
+        echo "🧪 TEST 3: Environment info"
+        RESPONSE3=$(curl -s -w "%{http_code}" -X POST "$FUNCTION_URL" \
+          -H "Content-Type: application/json" \
+          -d '{"mode": "environment"}' \
+          -o test3_response.json)
+        
+        HTTP_CODE3=${RESPONSE3: -3}
+        echo "   📊 HTTP Status: $HTTP_CODE3"
+        
+        if [ "$HTTP_CODE3" -eq 200 ]; then
+          echo "   ✅ Environment test successful"
+          cat test3_response.json | jq . 2>/dev/null || cat test3_response.json
+        else
+          echo "   ❌ Environment test failed"
+          cat test3_response.json 2>/dev/null || echo "No response body"
+        fi
+        
+        rm -f test1_response.json test2_response.json test3_response.json
+        echo "✅ All tests completed"
 
     - name: 📊 Deployment Summary
       run: |
@@ -331,23 +301,23 @@ jobs:
         echo "| 📝 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
         echo "| 🌿 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "### 🔐 How to use the authenticated function:" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**⚠️ IMPORTANTE: Esta function requiere autenticación IAM**" >> $GITHUB_STEP_SUMMARY
+        echo "### 🌐 How to use the function:" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
-        echo "# 1. Autenticarse con gcloud" >> $GITHUB_STEP_SUMMARY
-        echo "gcloud auth login" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "# 2. Generar token de autenticación" >> $GITHUB_STEP_SUMMARY
-        echo "FUNCTION_URL=\"${FUNCTION_URL}\"" >> $GITHUB_STEP_SUMMARY
-        echo "ID_TOKEN=\$(gcloud auth print-identity-token --audiences=\"\$FUNCTION_URL\")" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "# 3. Simple message (CON autenticación)" >> $GITHUB_STEP_SUMMARY
-        echo "curl -X POST \"\$FUNCTION_URL\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "# Simple message" >> $GITHUB_STEP_SUMMARY
+        echo "curl -X POST \"${FUNCTION_URL}\" \\" >> $GITHUB_STEP_SUMMARY
         echo "  -H \"Content-Type: application/json\" \\" >> $GITHUB_STEP_SUMMARY
-        echo "  -H \"Authorization: Bearer \$ID_TOKEN\" \\" >> $GITHUB_STEP_SUMMARY
-        echo "  -d '{\"mode\": \"simple\", \"message\": \"Hello Authenticated!\", \"user\": \"YourName\"}'" >> $GITHUB_STEP_SUMMARY
+        echo "  -d '{\"mode\": \"simple\", \"message\": \"Hello World!\", \"user\": \"YourName\"}'" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Multiple messages" >> $GITHUB_STEP_SUMMARY
+        echo "curl -X POST \"${FUNCTION_URL}\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -H \"Content-Type: application/json\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -d '{\"mode\": \"multiple\", \"message\": \"Test\", \"count\": 3, \"user\": \"YourName\"}'" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# Environment info" >> $GITHUB_STEP_SUMMARY
+        echo "curl -X POST \"${FUNCTION_URL}\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -H \"Content-Type: application/json\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -d '{\"mode\": \"environment\"}'" >> $GITHUB_STEP_SUMMARY
         echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
   notify:

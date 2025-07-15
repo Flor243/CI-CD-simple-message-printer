@@ -94,3 +94,4 @@ tmp/
 *.backup
 
 setup_cloud_deployment.txt
+deploy-cloud-function.txt
