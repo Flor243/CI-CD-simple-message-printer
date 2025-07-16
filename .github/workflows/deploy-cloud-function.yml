@@ -1,5 +1,5 @@
 # .github/workflows/deploy-cloud-function.yml
-name: 🖨️ Deploy Simple Message Printer to Google Cloud Functions.
+name: 🖨️ Deploy Simple Message Printer to Google Cloud Functions
 
 on:
   push:
