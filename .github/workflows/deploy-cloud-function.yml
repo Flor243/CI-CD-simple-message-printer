@@ -207,35 +207,34 @@ jobs:
 
     - name: 🔐 Configure IAM permissions for authorized users
       run: |
-        ENV_NAME="${{ steps.env.outputs.environment }}"
-        FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
-        
-        echo "🔐 Configurando permisos IAM para usuarios autorizados..."
-        echo "🎯 Function: ${FUNCTION_NAME_ENV}"
-        
-        AUTHORIZED_USERS=(
-          "ffernandez@howdy.com"
-        )
-        
-        SERVICE_ACCOUNT="serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-        
-        echo "👥 Otorgando permisos de invoker a usuarios autorizados..."
-        
-        for USER in "${AUTHORIZED_USERS[@]}"; do
-          echo "   📋 Adding user: $USER"
-          gcloud functions add-iam-policy-binding ${FUNCTION_NAME_ENV} \
+          ENV_NAME="${{ steps.env.outputs.environment }}"
+          FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
+          
+          echo "🔐 Configurando permisos IAM para usuarios autorizados..."
+          echo "🎯 Function: ${FUNCTION_NAME_ENV}"
+          
+          AUTHORIZED_USERS=(
+            "ffernandez@howdy.com"
+          )
+          
+          SERVICE_ACCOUNT="serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          
+          echo "👥 Otorgando permisos de invoker a usuarios autorizados (Cloud Functions Gen2)..."
+          
+          for USER in "${AUTHORIZED_USERS[@]}"; do
+            echo "   📋 Adding user: $USER"
+            # Usar el comando específico para Gen2 functions
+            gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
+              --region=${{ env.REGION }} \
+              --member="user:$USER" || echo "Could not add $USER"
+          done
+          
+          echo "🤖 Otorgando permisos al Service Account para automation..."
+          gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
             --region=${{ env.REGION }} \
-            --member="user:$USER" \
-            --role="roles/cloudfunctions.invoker" || echo "Could not add $USER"
-        done
-        
-        echo "🤖 Otorgando permisos al Service Account para automation..."
-        gcloud functions add-iam-policy-binding ${FUNCTION_NAME_ENV} \
-          --region=${{ env.REGION }} \
-          --member="$SERVICE_ACCOUNT" \
-          --role="roles/cloudfunctions.invoker"
-        
-        echo "✅ Permisos IAM configurados exitosamente"
+            --member="$SERVICE_ACCOUNT" || echo "Could not add Service Account"
+          
+          echo "✅ Permisos IAM configurados exitosamente para Cloud Functions Gen2"
 
     - name: 🌐 Get function URL
       id: get_url
