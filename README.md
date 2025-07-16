@@ -80,6 +80,7 @@ CI-CD-simple-message-printer/
 ├── 📁 scripts/                     # Scripts de automatización
 │   ├── setup_ci_cd.sh             # Setup unificado (NUEVO)
 │   ├── test_local.sh              # Testing local
+│   ├── test_with_service_account.sh # Testing con autenticación
 │   ├── deploy_manual.sh           # Deploy manual
 │   └── check_service_accounts_fixed.sh # Análisis de SAs
 ├── 📁 tests/                       # Tests unitarios
@@ -146,12 +147,28 @@ chmod +x scripts/setup_ci_cd.sh
 ./scripts/setup_ci_cd.sh --use-existing admin-sa@your-project.iam.gserviceaccount.com
 ```
 
+#### **🔑 IMPORTANTE: Conservar la Clave JSON**
+Cuando ejecutes el script de setup, **NO elimines** el archivo JSON cuando te pregunte:
+
+```bash
+🧹 ¿Eliminar archivo JSON local por seguridad? (y/n)
+# Responde: n
+
+📁 Archivo conservado: github-actions-key-YYYYMMDD_HHMMSS.json
+⚠️  IMPORTANTE: NO commitees este archivo a Git
+```
+
+**¿Por qué conservar la clave?**
+- ✅ **Testing Local**: La necesitarás para probar la función localmente
+- ✅ **Desarrollo**: Permite autenticación local sin regenerar claves
+- ✅ **Debugging**: Facilita troubleshooting de permisos
+
 #### **¿Qué hace el script automáticamente?**
 - ✅ **Analiza tu proyecto** → Ve qué Service Accounts ya existen
 - ✅ **Evalúa permisos** → Recomienda la mejor Service Account
 - ✅ **Habilita APIs** → Configura todas las APIs necesarias
 - ✅ **Gestiona permisos** → Asigna roles si crea nueva SA
-- ✅ **Genera claves** → Crea JSON para GitHub Secrets
+- ✅ **Genera claves** → Crea JSON para GitHub Secrets Y desarrollo local
 - ✅ **Da instrucciones** → Te dice exactamente qué hacer después
 
 ### 3️⃣ Configurar GitHub Secrets
@@ -191,77 +208,101 @@ Tu función está configurada con **autenticación requerida**, lo que significa
 
 #### **👥 Usuarios Autorizados Automáticamente:**
 - Service Account del proyecto (para automation)
+- Usuario configurado en el workflow (tu email)
 
-#### **🔐 Cómo usar la function autenticada:**
+#### **🔐 Solución: Usar Service Account para Autenticación**
+
+El workflow de GitHub Actions funciona porque usa un **Service Account**, no una cuenta de usuario. Para replicar esto localmente, tienes 2 opciones:
+
+##### **Opción 1: Usar Service Account Localmente (Recomendado)**
 
 ```bash
-# PASO 1: Autenticarse con Google Cloud
+# 1. Usar la clave JSON que conservaste del setup inicial
+SA_KEY_FILE="github-actions-key-YYYYMMDD_HHMMSS.json"  # El archivo que conservaste
+SA_EMAIL="service_account_email"
+
+# 2. Activar el Service Account localmente
+gcloud auth activate-service-account "$SA_EMAIL" \
+  --key-file="$SA_KEY_FILE"
+
+# 3. Obtener URL de la función
+FUNCTION_URL=$(gcloud functions describe function_name \
+  --gen2 --region=us-central1 --format="value(serviceConfig.uri)")
+
+# 4. Generar identity token (ahora SÍ funciona con Service Account)
+ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
+
+# 5. Usar la función
+curl -X POST "$FUNCTION_URL" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -d '{"mode": "simple", "message": "Hello from Service Account!", "user": "LocalTest"}'
+
+# 6. IMPORTANTE: Volver a tu cuenta personal después del test
 gcloud auth login
-
-# PASO 2: Obtener URL de la function desde GitHub Actions logs o:
-FUNCTION_URL=$(gcloud functions describe simple-message-printer-production \
-  --region=us-central1 --format="value(serviceConfig.uri)")
-
-# PASO 3: Generar token de autenticación
-# Para cuentas de usuario (más común):
-ACCESS_TOKEN=$(gcloud auth print-access-token)
-
-# Para Service Accounts (si estás usando una):
-# ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
-
-# PASO 4: Usar la function CON autenticación
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -d '{"mode": "simple", "message": "Hello World!", "user": "YourName"}'
-
-# PASO 5: Probar diferentes modos (todos requieren autenticación)
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -d '{"mode": "multiple", "message": "Test", "count": 3, "user": "YourName"}'
-
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -d '{"mode": "environment"}'
-
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -d '{"mode": "test"}'
 ```
 
-#### **❌ Sin autenticación FALLARÁ:**
-```bash
-# Esto dará error 403 Forbidden:
-curl -X POST "$FUNCTION_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "simple"}'
-# Response: {"error": "Forbidden", "status": 403}
-```
-
-#### **👥 Agregar usuarios adicionales:**
-
-Si necesitas dar acceso a más usuarios, puedes hacerlo manualmente:
+##### **Opción 3: Hacer la Función Pública Temporalmente**
 
 ```bash
-# Agregar nuevo usuario autorizado
-gcloud functions add-iam-policy-binding simple-message-printer-production \
+# SOLO para desarrollo - hacer función pública temporalmente
+gcloud run services add-iam-policy-binding simple-message-printer-development \
   --region=us-central1 \
-  --member="user:nuevo-usuario@empresa.com" \
-  --role="roles/cloudfunctions.invoker"
+  --member="allUsers" \
+  --role="roles/run.invoker"
 
-# Agregar grupo de Google Workspace (si aplica)
-gcloud functions add-iam-policy-binding simple-message-printer-production \
+# Ahora puedes usar sin autenticación
+curl -X POST "https://simple-message-printer-development-XXXXXX-uc.a.run.app" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "simple", "message": "Hello Public!", "user": "LocalTest"}'
+
+# IMPORTANTE: Revertir cuando termines
+gcloud run services remove-iam-policy-binding simple-message-printer-development \
   --region=us-central1 \
-  --member="group:data-team@empresa.com" \
-  --role="roles/cloudfunctions.invoker"
-
-# Ver usuarios que tienen acceso actual
-gcloud functions get-iam-policy simple-message-printer-production \
-  --region=us-central1
+  --member="allUsers" \
+  --role="roles/run.invoker"
 ```
+
+#### **🔧 Troubleshooting de Autenticación**
+
+**Error: "401 Unauthorized" con Cloud Functions Gen2**
+```bash
+# Este error indica que estás usando access token en lugar de identity token
+# Solución: Usar Service Account para generar identity token
+
+# Verificar que tienes la clave JSON del setup
+ls -la github-actions-key*.json
+
+# Si no la tienes, regenerar:
+gcloud iam service-accounts keys create sa-key.json \
+  --iam-account="github-actions-deployer@your-project.iam.gserviceaccount.com"
+```
+
+**Error: "Invalid account type for --audiences"**
+```bash
+# Este error significa que estás usando una cuenta de usuario, no Service Account
+# Solución: Activar Service Account primero
+
+gcloud auth activate-service-account SERVICE_ACCOUNT_EMAIL \
+  --key-file=github-actions-key-YYYYMMDD_HHMMSS.json
+
+# Luego generar identity token
+ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
+```
+
+**¿Por qué pasa esto?**
+
+**Diferencias entre cuentas de usuario y Service Accounts:**
+
+1. **Cuentas de Usuario** (`tu-email@empresa.com`):
+   - ❌ **NO** pueden generar `identity tokens`
+   - ✅ Pueden generar `access tokens` 
+   - ❌ `Access tokens` NO funcionan para Cloud Functions Gen2 con IAM
+
+2. **Service Accounts** (`github-actions-deployer@...`):
+   - ✅ **SÍ** pueden generar `identity tokens`
+   - ✅ `Identity tokens` funcionan perfectamente para Cloud Functions Gen2
+
 #### **👥 Gestión de Usuarios Autorizados (Cloud Functions Gen2)**
 
 **Ver usuarios con acceso actual:**
@@ -276,6 +317,12 @@ gcloud functions get-iam-policy simple-message-printer-production \
 gcloud functions add-invoker-policy-binding simple-message-printer-production \
   --region=us-central1 \
   --member="user:nuevo-usuario@empresa.com"
+
+# También para el servicio Cloud Run subyacente
+gcloud run services add-iam-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="user:nuevo-usuario@empresa.com" \
+  --role="roles/run.invoker"
 ```
 
 **Remover acceso de usuario:**
@@ -290,40 +337,6 @@ gcloud functions remove-invoker-policy-binding simple-message-printer-production
 gcloud functions add-invoker-policy-binding simple-message-printer-production \
   --region=us-central1 \
   --member="group:data-team@empresa.com"
-```
-
-#### **🔧 Troubleshooting de Autenticación:**
-
-**Error: "401 Unauthorized" con Cloud Functions Gen2**
-```bash
-# Cloud Functions Gen2 requiere permisos específicos
-# Usar este comando en lugar de add-iam-policy-binding:
-gcloud functions add-invoker-policy-binding FUNCTION_NAME \
-  --region=us-central1 \
-  --member="user:tu-email@empresa.com"
-```
-
-**Error: "Invalid account type for --audiences"**
-```bash
-# Este error significa que estás usando una cuenta de usuario, no Service Account
-# Solución: Usar access token en lugar de identity token
-ACCESS_TOKEN=$(gcloud auth print-access-token)
-curl -X POST "$FUNCTION_URL" \
-  -H "Authorization: Bearer $ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "test"}'
-```
-
-**Error: "Permission denied"**
-```bash
-# Verificar que tienes permisos correctos para Gen2
-gcloud functions get-iam-policy simple-message-printer-production \
-  --region=us-central1
-
-# Si no apareces en la lista, agregar permisos:
-gcloud functions add-invoker-policy-binding simple-message-printer-production \
-  --region=us-central1 \
-  --member="user:tu-email@empresa.com"
 ```
 
 ## 🔧 Setup Detallado
@@ -493,9 +506,12 @@ source venv/bin/activate  # Si no está activado
 # Ejecutar tests unitarios
 pytest tests/ -v
 
-# Testing de la function localmente
+# Testing de la function localmente (sin autenticación)
 ./scripts/test_local.sh
 # Abre http://localhost:8080
+
+# Testing de la function deployada (con autenticación)
+./scripts/test_with_service_account.sh
 ```
 
 ### 🔄 Desarrollo Iterativo
@@ -518,12 +534,15 @@ pytest tests/ -v
 # 5. Verificar calidad de código
 flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
-# 6. Si todo pasa, commit y push
+# 6. Probar con autenticación (opcional)
+./scripts/test_with_service_account.sh
+
+# 7. Si todo pasa, commit y push
 git add .
 git commit -m "✨ Add new functionality"
 git push origin feature/new-functionality
 
-# 7. Automáticamente deploya a development environment
+# 8. Automáticamente deploya a development environment
 ```
 
 ## 🚀 Deployment
@@ -569,9 +588,13 @@ pytest tests/test_printer.py::TestMessagePrinter::test_print_message_basic -v
 
 ### 🌐 Tests de Integration
 
+#### **Testing Local (Sin Autenticación)**
 ```bash
-# Test de la function deployada
-FUNCTION_URL="your-function-url"
+# Test del servidor local
+./scripts/test_local.sh
+# Luego en otra terminal:
+
+FUNCTION_URL="http://localhost:8080"
 
 # Test básico
 curl -X POST "$FUNCTION_URL" \
@@ -582,11 +605,30 @@ curl -X POST "$FUNCTION_URL" \
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
   -d '{"mode": "multiple", "message": "Integration test", "count": 3}'
+```
 
-# Test de environment info
+#### **Testing de Función Deployada (Con Autenticación)**
+```bash
+# Usar el script automatizado (recomendado)
+./scripts/test_with_service_account.sh
+
+# O manualmente:
+SA_KEY_FILE="github-actions-key-YYYYMMDD_HHMMSS.json"  # Tu archivo conservado
+gcloud auth activate-service-account \
+  "github-actions-deployer@your-project.iam.gserviceaccount.com" \
+  --key-file="$SA_KEY_FILE"
+
+FUNCTION_URL=$(gcloud functions describe simple-message-printer-development \
+  --gen2 --region=us-central1 --format="value(serviceConfig.uri)")
+ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
+
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ID_TOKEN" \
   -d '{"mode": "environment"}'
+
+# Restaurar tu cuenta
+gcloud auth login
 ```
 
 ## 📊 Monitoreo
@@ -620,41 +662,15 @@ gcloud functions logs read simple-message-printer-production \
 
 ## 🔒 Seguridad
 
-### 🌐 Configuración Actual: Function Pública
+### 🔐 Configuración Actual: Function con Autenticación IAM
 
-**Estado actual:** La Cloud Function está configurada como **pública** (`--allow-unauthenticated`)
+**Estado actual:** La Cloud Function está configurada con **autenticación requerida** (`--no-allow-unauthenticated`)
 
 **Esto significa:**
-- ✅ **Fácil de usar** → No necesita tokens de autenticación
-- ✅ **Testing simple** → Cualquier curl funciona
-- ⚠️ **Menos seguro** → Cualquiera con la URL puede usarla
-- 💡 **Ideal para desarrollo** y demos
-
-### 🔐 Para Habilitar Autenticación (Opcional)
-
-Si quieres hacer la function privada, modifica el workflow:
-
-```yaml
-# En .github/workflows/deploy-cloud-function.yml
-# Cambiar esta línea:
---allow-unauthenticated
-
-# Por esta:
---no-allow-unauthenticated
-```
-
-**Entonces necesitarás autenticación:**
-```bash
-# Generar token
-FUNCTION_URL="your-function-url"
-ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
-
-# Usar con autenticación
-curl -X POST "$FUNCTION_URL" \
-  -H "Authorization: Bearer $ID_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "simple", "message": "Hello World!", "user": "YourName"}'
-```
+- ✅ **Muy seguro** → Solo usuarios autorizados pueden acceder
+- ✅ **Auditabilidad** → Todos los accesos son rastreables
+- ⚠️ **Requiere tokens** → Necesita autenticación para acceder
+- 💡 **Ideal para producción** y ambientes seguros
 
 ### 🛡️ Permisos IAM del Service Account
 
@@ -664,6 +680,28 @@ El Service Account tiene **solo** los permisos necesarios:
 - `logging.admin` - Para logs
 - `iam.serviceAccountUser` - Para usar Service Accounts
 - `serviceusage.serviceUsageAdmin` - Para gestionar APIs
+
+### 🔑 Gestión de Claves de Service Account
+
+**Buenas prácticas:**
+- ✅ **Conservar clave local** para desarrollo (fuera de Git)
+- ✅ **Rotar claves** periódicamente
+- ✅ **No commitear claves** a repositorios
+- ✅ **Usar variables de entorno** para claves en scripts
+
+```bash
+# Rotar clave (crear nueva y eliminar anterior)
+gcloud iam service-accounts keys create new-key.json \
+  --iam-account="github-actions-deployer@your-project.iam.gserviceaccount.com"
+
+# Listar claves existentes
+gcloud iam service-accounts keys list \
+  --iam-account="github-actions-deployer@your-project.iam.gserviceaccount.com"
+
+# Eliminar clave anterior (después de verificar que la nueva funciona)
+gcloud iam service-accounts keys delete KEY_ID \
+  --iam-account="github-actions-deployer@your-project.iam.gserviceaccount.com"
+```
 
 ## 📚 Documentación Técnica
 
@@ -732,7 +770,41 @@ El Service Account tiene **solo** los permisos necesarios:
 
 #### ❌ Common Issues
 
-**1. Setup script no encuentra Service Accounts**
+**1. Error 401 "Unauthorized" al probar función**
+```bash
+# Causa: Usando access token en lugar de identity token
+# Solución: Usar Service Account
+
+# Activar Service Account
+gcloud auth activate-service-account \
+  "github-actions-deployer@your-project.iam.gserviceaccount.com" \
+  --key-file="github-actions-key-YYYYMMDD_HHMMSS.json"
+
+# Generar identity token
+FUNCTION_URL="your-function-url"
+ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
+
+# Usar con identity token
+curl -X POST "$FUNCTION_URL" \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "test"}'
+```
+
+**2. Error "Invalid account type for --audiences"**
+```bash
+# Causa: Intentando generar identity token con cuenta de usuario
+# Solución: Usar Service Account primero
+
+# Verificar que tienes la clave JSON
+ls -la github-actions-key*.json
+
+# Activar Service Account
+gcloud auth activate-service-account SERVICE_ACCOUNT_EMAIL \
+  --key-file=github-actions-key-YYYYMMDD_HHMMSS.json
+```
+
+**3. Setup script no encuentra Service Accounts**
 ```bash
 # Verificar autenticación y proyecto
 gcloud auth list
@@ -742,92 +814,6 @@ gcloud config get-value project
 ./scripts/check_service_accounts_fixed.sh
 ```
 
-**2. Deploy falla con "Permission Denied"**
+**4. Deploy falla con "Permission Denied"**
 ```bash
 # Verificar que la Service Account tiene permisos
-./scripts/setup_ci_cd.sh --help
-
-# Re-ejecutar setup para verificar/reparar permisos
-./scripts/setup_ci_cd.sh
-```
-
-**3. Function retorna 500 Error**
-```bash
-# Ver logs detallados
-gcloud functions logs read simple-message-printer-production --region=us-central1 --limit=10
-
-# Verificar imports
-pytest tests/ -v
-```
-
-**4. GitHub Actions falla en deploy**
-```bash
-# Verificar secrets en GitHub
-# Settings → Secrets → Actions
-# Debe tener: GCP_SA_KEY, GCP_PROJECT_ID
-```
-
-**5. Local testing no funciona**
-```bash
-# Verificar entorno virtual
-source venv/bin/activate
-
-# Verificar estructura
-ls -la cloud_functions/
-# Debe tener: main.py, printer/, utils/
-
-# Re-ejecutar setup local
-./scripts/test_local.sh
-```
-
-### 🆘 Support
-
-Si encuentras issues:
-
-1. **Verificar configuración** con el script unificado:
-   ```bash
-   ./scripts/setup_ci_cd.sh --help
-   ./scripts/check_service_accounts_fixed.sh
-   ```
-
-2. **Revisar logs** en GCP Console y GitHub Actions
-
-3. **Ejecutar tests** localmente:
-   ```bash
-   pytest tests/ -v
-   ./scripts/test_local.sh
-   ```
-
-4. **Re-ejecutar setup** si es necesario:
-   ```bash
-   ./scripts/setup_ci_cd.sh
-   ```
-
----
-
-## 🎉 Conclusión
-
-Este proyecto demuestra un **pipeline completo de CI/CD moderno** con:
-
-✅ **Setup Inteligente** → Script unificado que analiza y recomienda  
-✅ **Deployment automático** en cada push  
-✅ **Testing automatizado** con quality gates  
-✅ **Infraestructura real** en Google Cloud  
-✅ **Security best practices** con Service Accounts  
-✅ **Monitoring y logging** completo  
-✅ **Documentación exhaustiva**  
-
-### 🔧 **Personalización:**
-
-Este proyecto sirve como **template base** - puedes reemplazar la lógica de "message printing" con cualquier funcionalidad que necesites, manteniendo toda la infraestructura de CI/CD intacta.
-
-### 🚀 **Siguientes Pasos:**
-
-1. **Ejecuta** `./scripts/setup_ci_cd.sh` para comenzar
-2. **Personaliza** la lógica en `src/printer/message_printer.py`
-3. **Agrega** tus propios tests en `tests/`
-4. **Deploya** con confianza usando `git push`
-
----
-
-*Creado como demostración de CI/CD moderno con GitHub Actions y Google Cloud Functions* 🚀
