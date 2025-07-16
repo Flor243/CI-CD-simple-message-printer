@@ -222,17 +222,27 @@ jobs:
           echo "👥 Otorgando permisos de invoker a usuarios autorizados (Cloud Functions Gen2)..."
           
           for USER in "${AUTHORIZED_USERS[@]}"; do
-            echo "   📋 Adding user: $USER"
-            # Usar el comando específico para Gen2 functions
+            echo "   📋 Adding user to Cloud Functions: $USER"
             gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
               --region=${{ env.REGION }} \
-              --member="user:$USER" || echo "Could not add $USER"
+              --member="user:$USER" || echo "Could not add $USER to Cloud Functions"
+            
+            echo "   🚀 Adding user to Cloud Run service: $USER"  
+            gcloud run services add-iam-policy-binding ${FUNCTION_NAME_ENV} \
+              --region=${{ env.REGION }} \
+              --member="user:$USER" \
+              --role="roles/run.invoker" || echo "Could not add $USER to Cloud Run"
           done
           
           echo "🤖 Otorgando permisos al Service Account para automation..."
           gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
             --region=${{ env.REGION }} \
-            --member="$SERVICE_ACCOUNT" || echo "Could not add Service Account"
+            --member="$SERVICE_ACCOUNT" || echo "Could not add SA to Cloud Functions"
+            
+          gcloud run services add-iam-policy-binding ${FUNCTION_NAME_ENV} \
+            --region=${{ env.REGION }} \
+            --member="$SERVICE_ACCOUNT" \
+            --role="roles/run.invoker" || echo "Could not add SA to Cloud Run"
           
           echo "✅ Permisos IAM configurados exitosamente para Cloud Functions Gen2"
 

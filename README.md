@@ -183,28 +183,147 @@ git push origin main
 # Ver el deployment en GitHub Actions tab
 ```
 
-### 5️⃣ Usar la Function
+### 5️⃣ Usar la Function (Con Autenticación IAM Requerida)
 
-⚠️ **NOTA:** Con la configuración actual, la function es **pública** (no requiere autenticación).
+⚠️ **IMPORTANTE: Esta Cloud Function requiere autenticación IAM**
+
+Tu función está configurada con **autenticación requerida**, lo que significa que solo usuarios autorizados pueden acceder a ella.
+
+#### **👥 Usuarios Autorizados Automáticamente:**
+- Service Account del proyecto (para automation)
+
+#### **🔐 Cómo usar la function autenticada:**
 
 ```bash
-# PASO 1: Obtener URL de la function desde GitHub Actions logs o:
+# PASO 1: Autenticarse con Google Cloud
+gcloud auth login
+
+# PASO 2: Obtener URL de la function desde GitHub Actions logs o:
 FUNCTION_URL=$(gcloud functions describe simple-message-printer-production \
   --region=us-central1 --format="value(serviceConfig.uri)")
 
-# PASO 2: Usar la function (sin autenticación)
+# PASO 3: Generar token de autenticación
+# Para cuentas de usuario (más común):
+ACCESS_TOKEN=$(gcloud auth print-access-token)
+
+# Para Service Accounts (si estás usando una):
+# ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL")
+
+# PASO 4: Usar la function CON autenticación
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -d '{"mode": "simple", "message": "Hello World!", "user": "YourName"}'
 
-# PASO 3: Probar diferentes modos
+# PASO 5: Probar diferentes modos (todos requieren autenticación)
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -d '{"mode": "multiple", "message": "Test", "count": 3, "user": "YourName"}'
 
 curl -X POST "$FUNCTION_URL" \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
   -d '{"mode": "environment"}'
+
+curl -X POST "$FUNCTION_URL" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -d '{"mode": "test"}'
+```
+
+#### **❌ Sin autenticación FALLARÁ:**
+```bash
+# Esto dará error 403 Forbidden:
+curl -X POST "$FUNCTION_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "simple"}'
+# Response: {"error": "Forbidden", "status": 403}
+```
+
+#### **👥 Agregar usuarios adicionales:**
+
+Si necesitas dar acceso a más usuarios, puedes hacerlo manualmente:
+
+```bash
+# Agregar nuevo usuario autorizado
+gcloud functions add-iam-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="user:nuevo-usuario@empresa.com" \
+  --role="roles/cloudfunctions.invoker"
+
+# Agregar grupo de Google Workspace (si aplica)
+gcloud functions add-iam-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="group:data-team@empresa.com" \
+  --role="roles/cloudfunctions.invoker"
+
+# Ver usuarios que tienen acceso actual
+gcloud functions get-iam-policy simple-message-printer-production \
+  --region=us-central1
+```
+#### **👥 Gestión de Usuarios Autorizados (Cloud Functions Gen2)**
+
+**Ver usuarios con acceso actual:**
+```bash
+gcloud functions get-iam-policy simple-message-printer-production \
+  --region=us-central1
+```
+
+**Agregar nuevo usuario autorizado (Gen2):**
+```bash
+# Comando específico para Cloud Functions Gen2
+gcloud functions add-invoker-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="user:nuevo-usuario@empresa.com"
+```
+
+**Remover acceso de usuario:**
+```bash
+gcloud functions remove-invoker-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="user:usuario@empresa.com"
+```
+
+**Agregar grupo de Google Workspace:**
+```bash
+gcloud functions add-invoker-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="group:data-team@empresa.com"
+```
+
+#### **🔧 Troubleshooting de Autenticación:**
+
+**Error: "401 Unauthorized" con Cloud Functions Gen2**
+```bash
+# Cloud Functions Gen2 requiere permisos específicos
+# Usar este comando en lugar de add-iam-policy-binding:
+gcloud functions add-invoker-policy-binding FUNCTION_NAME \
+  --region=us-central1 \
+  --member="user:tu-email@empresa.com"
+```
+
+**Error: "Invalid account type for --audiences"**
+```bash
+# Este error significa que estás usando una cuenta de usuario, no Service Account
+# Solución: Usar access token en lugar de identity token
+ACCESS_TOKEN=$(gcloud auth print-access-token)
+curl -X POST "$FUNCTION_URL" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode": "test"}'
+```
+
+**Error: "Permission denied"**
+```bash
+# Verificar que tienes permisos correctos para Gen2
+gcloud functions get-iam-policy simple-message-printer-production \
+  --region=us-central1
+
+# Si no apareces en la lista, agregar permisos:
+gcloud functions add-invoker-policy-binding simple-message-printer-production \
+  --region=us-central1 \
+  --member="user:tu-email@empresa.com"
 ```
 
 ## 🔧 Setup Detallado
