@@ -1,0 +1,22 @@
+# requirements.txt - Simple Message Printer
+
+# Cloud Functions Framework
+functions-framework==3.*
+
+# For local testing
+flask==3.*
+
+# Testing
+pytest==7.*
+pytest-cov==4.*
+
+# Code quality
+flake8==6.*
+
+# JSON handling (built-in but explicit)
+# json - built-in
+# datetime - built-in
+# os - built-in
+# sys - built-in
+# logging - built-in
+# typing - built-in

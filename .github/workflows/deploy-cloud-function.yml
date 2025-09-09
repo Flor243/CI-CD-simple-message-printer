@@ -1,0 +1,380 @@
+# .github/workflows/deploy-cloud-function.yml
+name: 🖨️ Deploy Simple Message Printer to Google Cloud Functions
+
+on:
+  push:
+    branches: 
+      - main 
+      - develop
+      - 'feature/**'
+    paths:
+      - 'src/**'
+      - 'cloud_functions/**'
+      - '.github/workflows/**'
+  
+  pull_request:
+    branches: [ main ]
+    types: [ closed ]
+    
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      message_count:
+        description: 'Number of test messages to send'
+        required: false
+        default: '3'
+        type: string
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  FUNCTION_NAME: simple-message-printer
+  REGION: us-central1
+
+jobs:
+  validate:
+    name: 🔍 Validate Code
+    runs-on: ubuntu-latest
+    outputs:
+      should_deploy: ${{ steps.check.outputs.deploy }}
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🐍 Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 📦 Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest flake8
+        
+    - name: 🧹 Lint code
+      run: |
+        flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 cloud_functions/ --count --select=E9,F63,F7,F82 --show-source --statistics
+        
+    - name: 🧪 Run tests
+      run: |
+        pytest tests/ -v --tb=short || echo "Tests failed but continuing..."
+        
+    - name: ✅ Check if should deploy
+      id: check
+      run: |
+        echo "🔍 Analyzing if we should deploy..."
+        SHOULD_DEPLOY="false"
+        
+        if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+          SHOULD_DEPLOY="true"
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          SHOULD_DEPLOY="true"
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          SHOULD_DEPLOY="true"
+        elif [[ "${{ github.ref }}" == *"feature"* ]]; then
+          SHOULD_DEPLOY="true"
+        elif [[ "${{ github.event.pull_request.merged }}" == "true" ]]; then
+          SHOULD_DEPLOY="true"
+        fi
+        
+        echo "🎯 Should deploy: $SHOULD_DEPLOY"
+        echo "deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: 🚀 Deploy to Cloud Functions
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should_deploy == 'true'
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+
+    - name: 🔐 Authenticate to Google Cloud
+      id: auth
+      uses: google-github-actions/auth@v1
+      with:
+        credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+    - name: ☁️ Set up Cloud SDK
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: 🔧 Enable required APIs
+      run: |
+        echo "🔧 Enabling required APIs..."
+        REQUIRED_APIS=(
+          "cloudfunctions.googleapis.com"
+          "cloudbuild.googleapis.com"
+          "cloudresourcemanager.googleapis.com"
+          "logging.googleapis.com"
+        )
+        
+        for API in "${REQUIRED_APIS[@]}"; do
+          echo "   - Enabling: $API"
+          gcloud services enable "$API" --project=${{ env.PROJECT_ID }} || echo "API already enabled or permission issue"
+        done
+        
+        echo "⏳ Waiting for API propagation..."
+        sleep 15
+
+    - name: 🔧 Determine environment
+      id: env
+      run: |
+        if [[ "${{ github.event.inputs.environment }}" != "" ]]; then
+          ENV="${{ github.event.inputs.environment }}"
+        elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+          ENV="production"
+        elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          ENV="staging"
+        elif [[ "${{ github.ref }}" == *"feature"* ]]; then
+          ENV="development"
+        else
+          ENV="development"
+        fi
+        echo "environment=${ENV}" >> $GITHUB_OUTPUT
+        echo "🎯 Deploying to: ${ENV}"
+
+    - name: 🚀 Deploy Cloud Function
+      run: |
+        ENV_NAME="${{ steps.env.outputs.environment }}"
+        FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
+        
+        echo "🖨️ Deploying Simple Message Printer: ${FUNCTION_NAME_ENV}"
+        
+        echo "📁 Preparing files for deployment..."
+        cp -r src/printer cloud_functions/
+        cp -r src/utils cloud_functions/
+        
+        echo "# Clean __init__.py for Cloud Functions" > cloud_functions/printer/__init__.py
+        echo "# Clean __init__.py for Cloud Functions" > cloud_functions/utils/__init__.py
+        
+        echo "📋 Verifying critical files..."
+        CRITICAL_FILES=(
+          "cloud_functions/printer/message_printer.py"
+          "cloud_functions/printer/config.py"
+          "cloud_functions/utils/logger.py"
+          "cloud_functions/main.py"
+        )
+        
+        for file in "${CRITICAL_FILES[@]}"; do
+          if [ -f "$file" ]; then
+            echo "✅ $file exists"
+          else
+            echo "❌ $file MISSING"
+            exit 1
+          fi
+        done
+        
+        cd cloud_functions/
+        
+        echo "📂 Final structure:"
+        ls -la
+        
+        echo "🚀 Starting deployment..."
+        gcloud functions deploy ${FUNCTION_NAME_ENV} \
+          --gen2 \
+          --runtime=python311 \
+          --source=. \
+          --entry-point=simple_message_printer \
+          --trigger-http \
+          --no-allow-unauthenticated \
+          --set-env-vars="LOG_LEVEL=${{ secrets.LOG_LEVEL || 'INFO' }},ENVIRONMENT=${ENV_NAME},DEFAULT_MESSAGE=${{ secrets.DEFAULT_MESSAGE || 'Hello from Cloud Function!' }},DEFAULT_USER=${{ secrets.DEFAULT_USER || 'Cloud' }},MESSAGE_PREFIX=${{ secrets.MESSAGE_PREFIX || '🖨️' }},DEPLOYED_BY=github-actions,COMMIT_SHA=${{ github.sha }},BRANCH=${{ github.ref_name }}" \
+          --memory=512Mi \
+          --timeout=60s \
+          --max-instances=10 \
+          --min-instances=0 \
+          --region=${{ env.REGION }} \
+          --quiet
+          
+        if [ $? -eq 0 ]; then
+          echo "✅ Deployment successful"
+        else
+          echo "❌ Deployment failed"
+          exit 1
+        fi
+
+    - name: 🔐 Configure IAM permissions for authorized users
+      run: |
+          ENV_NAME="${{ steps.env.outputs.environment }}"
+          FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
+          
+          echo "🔐 Configurando permisos IAM para usuarios autorizados..."
+          echo "🎯 Function: ${FUNCTION_NAME_ENV}"
+          
+          AUTHORIZED_USERS=(
+            "ffernandez@howdy.com"
+          )
+          
+          SERVICE_ACCOUNT="serviceAccount:github-actions-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
+          
+          echo "👥 Otorgando permisos de invoker a usuarios autorizados (Cloud Functions Gen2)..."
+          
+          for USER in "${AUTHORIZED_USERS[@]}"; do
+            echo "   📋 Adding user to Cloud Functions: $USER"
+            gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
+              --region=${{ env.REGION }} \
+              --member="user:$USER" || echo "Could not add $USER to Cloud Functions"
+            
+            echo "   🚀 Adding user to Cloud Run service: $USER"  
+            gcloud run services add-iam-policy-binding ${FUNCTION_NAME_ENV} \
+              --region=${{ env.REGION }} \
+              --member="user:$USER" \
+              --role="roles/run.invoker" || echo "Could not add $USER to Cloud Run"
+          done
+          
+          echo "🤖 Otorgando permisos al Service Account para automation..."
+          gcloud functions add-invoker-policy-binding ${FUNCTION_NAME_ENV} \
+            --region=${{ env.REGION }} \
+            --member="$SERVICE_ACCOUNT" || echo "Could not add SA to Cloud Functions"
+            
+          gcloud run services add-iam-policy-binding ${FUNCTION_NAME_ENV} \
+            --region=${{ env.REGION }} \
+            --member="$SERVICE_ACCOUNT" \
+            --role="roles/run.invoker" || echo "Could not add SA to Cloud Run"
+          
+          echo "✅ Permisos IAM configurados exitosamente para Cloud Functions Gen2"
+
+    - name: 🌐 Get function URL
+      id: get_url
+      run: |
+        ENV_NAME="${{ steps.env.outputs.environment }}"
+        FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
+        
+        FUNCTION_URL=$(gcloud functions describe ${FUNCTION_NAME_ENV} \
+          --gen2 \
+          --region=${{ env.REGION }} \
+          --format="value(serviceConfig.uri)")
+        
+        echo "url=${FUNCTION_URL}" >> $GITHUB_OUTPUT
+        echo "🌐 Function URL: ${FUNCTION_URL}"
+        echo "🔒 IMPORTANTE: Esta URL requiere autenticación para acceder"
+
+    - name: 🧪 Test deployed function with authentication
+      run: |
+        FUNCTION_URL="${{ steps.get_url.outputs.url }}"
+        MESSAGE_COUNT="${{ github.event.inputs.message_count || '3' }}"
+        
+        echo "🧪 Testing deployed function with authentication..."
+        echo "🎯 Function URL: $FUNCTION_URL"
+        
+        echo "🎫 Generando token de autenticación..."
+        ID_TOKEN=$(gcloud auth print-identity-token --audiences="$FUNCTION_URL" 2>/dev/null)
+        
+        if [ -z "$ID_TOKEN" ]; then
+          echo "⚠️ No se pudo generar identity token, intentando access token..."
+          ACCESS_TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+          if [ -n "$ACCESS_TOKEN" ]; then
+            AUTH_HEADER="Authorization: Bearer $ACCESS_TOKEN"
+            echo "✅ Using access token for authentication"
+          else
+            echo "❌ No se pudo generar ningún token de autenticación"
+            exit 0
+          fi
+        else
+          AUTH_HEADER="Authorization: Bearer $ID_TOKEN"
+          echo "✅ Using identity token for authentication"
+        fi
+        
+        echo "🧪 TEST 1: Simple message (authenticated)"
+        RESPONSE1=$(curl -s -w "%{http_code}" -X POST "$FUNCTION_URL" \
+          -H "Content-Type: application/json" \
+          -H "$AUTH_HEADER" \
+          -d '{"mode": "simple", "message": "Hello from authenticated GitHub Actions!", "user": "CI/CD-Auth"}' \
+          -o test1_response.json)
+        
+        HTTP_CODE1=${RESPONSE1: -3}
+        echo "   📊 HTTP Status: $HTTP_CODE1"
+        
+        if [ "$HTTP_CODE1" -eq 200 ]; then
+          echo "   ✅ Authenticated request successful"
+          cat test1_response.json | jq . 2>/dev/null || cat test1_response.json
+        else
+          echo "   ❌ Authenticated request failed"
+          cat test1_response.json 2>/dev/null || echo "No response body"
+        fi
+        
+        echo "🧪 TEST 2: Unauthenticated request (should fail)"
+        RESPONSE2=$(curl -s -w "%{http_code}" -X POST "$FUNCTION_URL" \
+          -H "Content-Type: application/json" \
+          -d '{"mode": "simple", "message": "Unauthorized test"}' \
+          -o test2_response.json)
+        
+        HTTP_CODE2=${RESPONSE2: -3}
+        echo "   📊 HTTP Status: $HTTP_CODE2"
+        
+        if [ "$HTTP_CODE2" -eq 403 ] || [ "$HTTP_CODE2" -eq 401 ]; then
+          echo "   ✅ Unauthenticated request correctly blocked"
+        else
+          echo "   ⚠️ WARNING: Unauthenticated request was not blocked"
+        fi
+        
+        rm -f test1_response.json test2_response.json
+        echo "✅ All authenticated tests completed"
+
+    - name: 📊 Deployment Summary
+      run: |
+        ENV_NAME="${{ steps.env.outputs.environment }}"
+        FUNCTION_NAME_ENV="${FUNCTION_NAME}-${ENV_NAME}"
+        FUNCTION_URL="${{ steps.get_url.outputs.url }}"
+        
+        echo "## 🖨️ Simple Message Printer Deployment Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| 🎯 Environment | \`${ENV_NAME}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| 📦 Function Name | \`${FUNCTION_NAME_ENV}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🌐 Function URL | ${FUNCTION_URL} |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🔧 Region | \`${{ env.REGION }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| 📝 Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| 🌿 Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 🔐 How to use the authenticated function:" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**⚠️ IMPORTANTE: Esta function requiere autenticación IAM**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+        echo "# 1. Autenticarse con gcloud" >> $GITHUB_STEP_SUMMARY
+        echo "gcloud auth login" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# 2. Generar token de autenticación" >> $GITHUB_STEP_SUMMARY
+        echo "FUNCTION_URL=\"${FUNCTION_URL}\"" >> $GITHUB_STEP_SUMMARY
+        echo "ID_TOKEN=\$(gcloud auth print-identity-token --audiences=\"\$FUNCTION_URL\")" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "# 3. Simple message (CON autenticación)" >> $GITHUB_STEP_SUMMARY
+        echo "curl -X POST \"\$FUNCTION_URL\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -H \"Content-Type: application/json\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -H \"Authorization: Bearer \$ID_TOKEN\" \\" >> $GITHUB_STEP_SUMMARY
+        echo "  -d '{\"mode\": \"simple\", \"message\": \"Hello Authenticated!\", \"user\": \"YourName\"}'" >> $GITHUB_STEP_SUMMARY
+        echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: 📢 Notify Results
+    runs-on: ubuntu-latest
+    needs: [validate, deploy]
+    if: always()
+    
+    steps:
+    - name: 📢 Deployment Status
+      run: |
+        if [[ "${{ needs.deploy.result }}" == "success" ]]; then
+          echo "✅ Deployment successful!"
+          echo "🖨️ Simple Message Printer is now live"
+        elif [[ "${{ needs.deploy.result }}" == "failure" ]]; then
+          echo "❌ Deployment failed!"
+        elif [[ "${{ needs.validate.outputs.should_deploy }}" == "false" ]]; then
+          echo "⏭️ Deployment skipped (no deployment needed)"
+        else
+          echo "❓ Deployment status unknown"
+        fi

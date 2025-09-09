@@ -1,0 +1,7 @@
+# tests/__init__.py
+"""
+Simple Message Printer - Tests Module
+Tests unitarios para el proyecto.
+"""
+
+# Este archivo permite que pytest encuentre los tests

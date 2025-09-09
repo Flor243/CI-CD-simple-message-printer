@@ -1,0 +1,99 @@
+# .gitignore - Simple Message Printer
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+*.out
+
+# Testing
+.coverage
+.pytest_cache/
+.tox/
+.nox/
+htmlcov/
+
+# Google Cloud
+*.json
+!*example*.json
+.gcloudignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+!env_example.sh
+
+# Cloud Functions deployment artifacts
+cloud_functions/printer/
+cloud_functions/utils/
+
+# Secrets y keys
+*key*.json
+*secret*
+*password*
+github-actions-key.json
+
+# Output y temporales
+output/
+temp/
+tmp/
+*.tmp
+
+# Backup files
+*.bak
+*.backup
+
+setup_cloud_deployment.txt
+setup_cloud_deployment.sh
+deploy-cloud-function.txt
+existing_sa/

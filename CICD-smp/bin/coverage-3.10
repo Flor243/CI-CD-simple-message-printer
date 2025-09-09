@@ -1,0 +1,10 @@
+#!/bin/sh
+'''exec' "/home/flor/Documents/Howdy/Roster/Python projects/simple_message_printer/CI-CD-simple-message-printer/CICD-smp/bin/python3" "$0" "$@"
+' '''
+# -*- coding: utf-8 -*-
+import re
+import sys
+from coverage.cmdline import main
+if __name__ == '__main__':
+    sys.argv[0] = re.sub(r'(-script\.pyw|\.exe)?$', '', sys.argv[0])
+    sys.exit(main())
